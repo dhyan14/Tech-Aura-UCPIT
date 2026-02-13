@@ -1,7 +1,7 @@
 
 "use client"
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,25 +9,29 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { 
-  Loader2, 
-  Plus, 
-  Trash2, 
-  LayoutDashboard, 
-  Lock, 
-  Mail, 
-  Info, 
-  Home as HomeIcon, 
-  Gamepad2, 
-  Calendar as CalendarIcon, 
-  Users, 
+import {
+  Loader2,
+  Plus,
+  Trash2,
+  LayoutDashboard,
+  Lock,
+  Mail,
+  Info,
+  Home as HomeIcon,
+  Gamepad2,
+  Calendar as CalendarIcon,
+  Users,
   FileText,
   Save,
   UserPlus,
-  Rocket
+  Rocket,
+  RefreshCw,
+  Download,
+  Search
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { eventsData as INITIAL_EVENTS } from '@/lib/events-data';
+import type { Registration, RegistrationStats } from '@/lib/admin-types';
 
 // Static mock data for demonstration
 const INITIAL_SPONSORS = [
@@ -36,30 +40,120 @@ const INITIAL_SPONSORS = [
   { id: '3', name: "Wayne Ent", logoUrl: "https://images.unsplash.com/photo-1762330918172-e19bcb6a7172", tier: "Silver" }
 ];
 
-const INITIAL_REGISTRATIONS = [
-  { id: '1', name: 'John Doe', email: 'john@example.com', phone: '+91 9876543210', event: 'Flagship Hackathon', timestamp: '2026-02-07 10:30' },
-  { id: '2', name: 'Jane Smith', email: 'jane@example.com', phone: '+91 9988776655', event: 'Maths Quiz', timestamp: '2026-02-07 11:15' },
-];
-
 export default function AdminPage() {
   const { toast } = useToast();
-  
+
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
 
-  // Session State (Static demo)
+  // Real-time data state
+  const [registrations, setRegistrations] = useState<Registration[]>([]);
+  const [stats, setStats] = useState<RegistrationStats>({
+    totalRegistrations: 0,
+    totalRevenue: 0,
+    eventCounts: {}
+  });
+  const [isLoadingData, setIsLoadingData] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Static demo state (preserving existing functionality)
   const [sponsors, setSponsors] = useState(INITIAL_SPONSORS);
   const [events, setEvents] = useState(INITIAL_EVENTS);
-  const [registrations, setRegistrations] = useState(INITIAL_REGISTRATIONS);
 
   // New Sponsor Form State
   const [newSponsor, setNewSponsor] = useState({ name: '', logoUrl: '', tier: 'Platinum' });
 
+  // Fetch registrations from Google Sheets
+  const fetchRegistrations = async () => {
+    setIsLoadingData(true);
+    try {
+      const response = await fetch('/api/admin/registrations');
+      const data = await response.json();
+
+      if (data.success) {
+        setRegistrations(data.registrations);
+        setStats(data.stats);
+        setLastUpdated(new Date());
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Data Fetch Failed",
+          description: data.error || "Could not fetch registration data"
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching registrations:', error);
+      toast({
+        variant: "destructive",
+        title: "Connection Error",
+        description: "Failed to connect to data source"
+      });
+    } finally {
+      setIsLoadingData(false);
+    }
+  };
+
+  // Auto-refresh every 30 seconds when logged in and on registrations tab
+  useEffect(() => {
+    if (isLoggedIn) {
+      fetchRegistrations();
+
+      const interval = setInterval(() => {
+        if (activeTab === 'registrations' || activeTab === 'dashboard') {
+          fetchRegistrations();
+        }
+      }, 30000); // 30 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [isLoggedIn, activeTab]);
+
+  // Filter registrations based on search
+  const filteredRegistrations = registrations.filter(reg => {
+    const query = searchQuery.toLowerCase();
+    return (
+      reg.fullName?.toLowerCase().includes(query) ||
+      reg.email?.toLowerCase().includes(query) ||
+      reg.mobile?.includes(query) ||
+      reg.registrationId?.toLowerCase().includes(query) ||
+      reg.selectedEvents?.toLowerCase().includes(query)
+    );
+  });
+
+  // Export to CSV
+  const exportToCSV = () => {
+    const headers = ['Timestamp', 'Registration ID', 'Full Name', 'Email', 'Mobile', 'College', 'Course & Semester', 'Events', 'Amount', 'Status', 'Payment ID'];
+    const rows = registrations.map(reg => [
+      reg.timestamp,
+      reg.registrationId,
+      reg.fullName,
+      reg.email,
+      reg.mobile,
+      reg.college,
+      reg.courseSemester,
+      reg.selectedEvents,
+      reg.totalAmount,
+      reg.paymentStatus,
+      reg.paymentId
+    ]);
+
+    const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `registrations_${new Date().toISOString()}.csv`;
+    a.click();
+
+    toast({ title: "Export Complete", description: "Registration data exported successfully" });
+  };
+
   const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoggingIn(true);
-    
+
     const formData = new FormData(e.currentTarget);
     const email = formData.get('email') as string;
     const password = formData.get('password') as string;
@@ -160,30 +254,71 @@ export default function AdminPage() {
             <Card className="glass-panel border-accent/20 rounded-none bg-black/40">
               <CardHeader className="pb-2">
                 <CardDescription className="text-[10px] uppercase tracking-widest">Registrations</CardDescription>
-                <CardTitle className="font-headline text-3xl text-accent">{registrations.length}</CardTitle>
-              </CardHeader>
-            </Card>
-            <Card className="glass-panel border-blue-500/20 rounded-none bg-black/40">
-              <CardHeader className="pb-2">
-                <CardDescription className="text-[10px] uppercase tracking-widest">Session Status</CardDescription>
-                <CardTitle className="font-headline text-3xl text-blue-400">ACTIVE</CardTitle>
+                <CardTitle className="font-headline text-3xl text-accent">
+                  {isLoadingData ? <Loader2 className="w-6 h-6 animate-spin" /> : stats.totalRegistrations}
+                </CardTitle>
               </CardHeader>
             </Card>
             <Card className="glass-panel border-green-500/20 rounded-none bg-black/40">
               <CardHeader className="pb-2">
-                <CardDescription className="text-[10px] uppercase tracking-widest">Integrity</CardDescription>
-                <CardTitle className="font-headline text-3xl text-green-400">100%</CardTitle>
+                <CardDescription className="text-[10px] uppercase tracking-widest">Total Revenue</CardDescription>
+                <CardTitle className="font-headline text-3xl text-green-400">
+                  {isLoadingData ? <Loader2 className="w-6 h-6 animate-spin" /> : `₹${stats.totalRevenue}`}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+            <Card className="glass-panel border-blue-500/20 rounded-none bg-black/40">
+              <CardHeader className="pb-2">
+                <CardDescription className="text-[10px] uppercase tracking-widest">Data Sync</CardDescription>
+                <CardTitle className="font-headline text-xl text-blue-400 flex items-center gap-2">
+                  <RefreshCw className={`w-5 h-5 ${isLoadingData ? 'animate-spin' : ''}`} />
+                  LIVE
+                </CardTitle>
               </CardHeader>
             </Card>
           </div>
           <Card className="glass-panel border-primary/10 rounded-none bg-black/20">
-            <CardHeader>
-              <CardTitle className="font-headline text-lg tracking-widest uppercase">System Logs</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="font-headline text-lg tracking-widest uppercase">Recent Registrations</CardTitle>
+                {lastUpdated && (
+                  <CardDescription className="text-[9px] uppercase tracking-widest mt-1">
+                    Last updated: {lastUpdated.toLocaleTimeString()}
+                  </CardDescription>
+                )}
+              </div>
+              <Button
+                onClick={fetchRegistrations}
+                disabled={isLoadingData}
+                variant="outline"
+                size="sm"
+                className="border-primary/20 rounded-none text-[10px] font-headline tracking-widest"
+              >
+                {isLoadingData ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : <RefreshCw className="w-3 h-3 mr-2" />}
+                REFRESH
+              </Button>
             </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="text-[10px] font-code text-muted-foreground/60">[08:45:12] Protocol Neon Horizon Initialized</div>
-              <div className="text-[10px] font-code text-muted-foreground/60">[09:12:05] Admin Auth Session Verified</div>
-              <div className="text-[10px] font-code text-muted-foreground/60">[10:30:44] New Registration: User Identity 001</div>
+            <CardContent>
+              {isLoadingData && registrations.length === 0 ? (
+                <div className="text-center py-8">
+                  <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-widest mt-4">Loading data...</p>
+                </div>
+              ) : registrations.length > 0 ? (
+                <div className="space-y-2">
+                  {registrations.slice(0, 5).map((reg, index) => (
+                    <div key={index} className="text-[10px] font-code text-muted-foreground/60 flex justify-between items-center p-2 bg-white/5 rounded">
+                      <span className="text-white font-medium">{reg.fullName}</span>
+                      <span>{reg.selectedEvents.split(',')[0]}</span>
+                      <span>₹{reg.totalAmount}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-widest">No registrations yet</p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -229,27 +364,27 @@ export default function AdminPage() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase tracking-widest">Company Identity</Label>
-                  <Input 
+                  <Input
                     value={newSponsor.name}
-                    onChange={(e) => setNewSponsor({...newSponsor, name: e.target.value})}
-                    placeholder="e.g. Acme Corp" 
-                    className="bg-white/5 border-white/10 rounded-none" 
+                    onChange={(e) => setNewSponsor({ ...newSponsor, name: e.target.value })}
+                    placeholder="e.g. Acme Corp"
+                    className="bg-white/5 border-white/10 rounded-none"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase tracking-widest">Logo Vector URL</Label>
-                  <Input 
+                  <Input
                     value={newSponsor.logoUrl}
-                    onChange={(e) => setNewSponsor({...newSponsor, logoUrl: e.target.value})}
-                    placeholder="https://images.unsplash.com/..." 
-                    className="bg-white/5 border-white/10 rounded-none" 
+                    onChange={(e) => setNewSponsor({ ...newSponsor, logoUrl: e.target.value })}
+                    placeholder="https://images.unsplash.com/..."
+                    className="bg-white/5 border-white/10 rounded-none"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] uppercase tracking-widest">Sponsorship Tier</Label>
-                  <select 
+                  <select
                     value={newSponsor.tier}
-                    onChange={(e) => setNewSponsor({...newSponsor, tier: e.target.value})}
+                    onChange={(e) => setNewSponsor({ ...newSponsor, tier: e.target.value })}
                     className="w-full bg-white/5 border border-white/10 p-2 text-xs rounded-none text-white"
                   >
                     <option value="Platinum">Platinum</option>
@@ -450,35 +585,123 @@ export default function AdminPage() {
                 <CardTitle className="font-headline text-xl tracking-widest flex items-center gap-2">
                   <Users className="w-5 h-5 text-accent" /> PARTICIPANT ARCHIVE
                 </CardTitle>
-                <CardDescription className="text-[10px] uppercase tracking-widest mt-1">Live Manifest of Verified Identities</CardDescription>
+                <CardDescription className="text-[10px] uppercase tracking-widest mt-1">
+                  Live Manifest of Verified Identities
+                  {lastUpdated && ` • Last updated: ${lastUpdated.toLocaleTimeString()}`}
+                </CardDescription>
               </div>
-              <Button variant="outline" className="border-primary/20 text-[10px] font-headline tracking-widest rounded-none">EXPORT MANIFEST</Button>
+              <div className="flex gap-2">
+                <Button
+                  onClick={fetchRegistrations}
+                  disabled={isLoadingData}
+                  variant="outline"
+                  className="border-primary/20 text-[10px] font-headline tracking-widest rounded-none"
+                >
+                  {isLoadingData ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : <RefreshCw className="w-3 h-3 mr-2" />}
+                  REFRESH
+                </Button>
+                <Button
+                  onClick={exportToCSV}
+                  disabled={registrations.length === 0}
+                  variant="outline"
+                  className="border-primary/20 text-[10px] font-headline tracking-widest rounded-none"
+                >
+                  <Download className="w-3 h-3 mr-2" />
+                  EXPORT MANIFEST
+                </Button>
+              </div>
             </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader className="border-white/10">
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="text-[10px] uppercase tracking-widest">Identity</TableHead>
-                    <TableHead className="text-[10px] uppercase tracking-widest">Communication</TableHead>
-                    <TableHead className="text-[10px] uppercase tracking-widest">Arena</TableHead>
-                    <TableHead className="text-[10px] uppercase tracking-widest">Time</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {registrations.map((reg) => (
-                    <TableRow key={reg.id} className="border-white/5 hover:bg-white/5">
-                      <TableCell className="text-[10px] uppercase font-bold text-white tracking-widest">{reg.name}</TableCell>
-                      <TableCell className="text-[10px] text-muted-foreground">{reg.email}</TableCell>
-                      <TableCell>
-                        <span className="text-[9px] px-2 py-0.5 bg-primary/20 text-primary border border-primary/20 font-headline uppercase">
-                          {reg.event}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-[10px] font-code text-muted-foreground/60">{reg.timestamp}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+            <CardContent className="space-y-4">
+              {/* Search Bar */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name, email, phone, or registration ID..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 bg-white/5 border-white/10 rounded-none"
+                />
+              </div>
+
+              {/* Loading State */}
+              {isLoadingData && registrations.length === 0 ? (
+                <div className="text-center py-12">
+                  <Loader2 className="w-12 h-12 animate-spin mx-auto text-primary mb-4" />
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Fetching registration data...</p>
+                </div>
+              ) : registrations.length === 0 ? (
+                <div className="text-center py-12 glass-panel bg-white/5 border-white/5">
+                  <Users className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground">No registrations found</p>
+                  <p className="text-[9px] uppercase tracking-widest text-muted-foreground/60 mt-2">
+                    Registrations will appear here once participants complete payment
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <Table>
+                    <TableHeader className="border-white/10">
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="text-[10px] uppercase tracking-widest">Registration ID</TableHead>
+                        <TableHead className="text-[10px] uppercase tracking-widest">Identity</TableHead>
+                        <TableHead className="text-[10px] uppercase tracking-widest">Communication</TableHead>
+                        <TableHead className="text-[10px] uppercase tracking-widest">College</TableHead>
+                        <TableHead className="text-[10px] uppercase tracking-widest">Events</TableHead>
+                        <TableHead className="text-[10px] uppercase tracking-widest">Amount</TableHead>
+                        <TableHead className="text-[10px] uppercase tracking-widest">Time</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredRegistrations.map((reg: Registration, index: number) => (
+                        <TableRow key={index} className="border-white/5 hover:bg-white/5">
+                          <TableCell className="text-[9px] font-code text-accent">
+                            {reg.registrationId}
+                          </TableCell>
+                          <TableCell className="text-[10px] uppercase font-bold text-white tracking-widest">
+                            {reg.fullName}
+                          </TableCell>
+                          <TableCell className="text-[10px] text-muted-foreground">
+                            <div>{reg.email}</div>
+                            <div className="text-[9px]">{reg.mobile}</div>
+                          </TableCell>
+                          <TableCell className="text-[9px] text-muted-foreground">
+                            <div>{reg.college}</div>
+                            <div className="text-[8px] text-muted-foreground/70">{reg.courseSemester}</div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-1">
+                              {reg.selectedEvents.split(',').slice(0, 2).map((event, i) => (
+                                <span
+                                  key={i}
+                                  className="text-[8px] px-1.5 py-0.5 bg-primary/20 text-primary border border-primary/20 font-headline uppercase"
+                                >
+                                  {event.trim()}
+                                </span>
+                              ))}
+                              {reg.selectedEvents.split(',').length > 2 && (
+                                <span className="text-[8px] text-muted-foreground">
+                                  +{reg.selectedEvents.split(',').length - 2} more
+                                </span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-[10px] font-bold text-accent">
+                            ₹{reg.totalAmount}
+                          </TableCell>
+                          <TableCell className="text-[9px] font-code text-muted-foreground/60">
+                            {new Date(reg.timestamp).toLocaleString()}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+
+                  {/* Results Count */}
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-widest text-center pt-4 border-t border-white/5">
+                    Showing {filteredRegistrations.length} of {registrations.length} registrations
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

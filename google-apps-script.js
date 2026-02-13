@@ -1,5 +1,6 @@
 // Google Apps Script Code for Google Sheets Integration
 // Deploy this as a Web App in Google Apps Script
+// This version supports both POST (write) and GET (read) requests
 
 function doPost(e) {
     try {
@@ -28,6 +29,67 @@ function doPost(e) {
             success: true,
             message: 'Data saved successfully'
         })).setMimeType(ContentService.MimeType.JSON);
+
+    } catch (error) {
+        return ContentService.createTextOutput(JSON.stringify({
+            success: false,
+            error: error.toString()
+        })).setMimeType(ContentService.MimeType.JSON);
+    }
+}
+
+// NEW: Handle GET requests to read data
+function doGet(e) {
+    try {
+        const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+        const data = sheet.getDataRange().getValues();
+
+        // Skip header row (first row) and convert to objects
+        const headers = data[0];
+        const registrations = [];
+
+        for (let i = 1; i < data.length; i++) {
+            const row = data[i];
+            registrations.push({
+                timestamp: row[0],
+                registrationId: row[1],
+                fullName: row[2],
+                email: row[3],
+                mobile: row[4],
+                college: row[5],
+                courseSemester: row[6],
+                selectedEvents: row[7],
+                totalAmount: row[8],
+                paymentStatus: row[9],
+                paymentId: row[10]
+            });
+        }
+
+        // Calculate statistics
+        const totalRegistrations = registrations.length;
+        const totalRevenue = registrations.reduce((sum, reg) => sum + (parseFloat(reg.totalAmount) || 0), 0);
+
+        // Event breakdown
+        const eventCounts = {};
+        registrations.forEach(reg => {
+            const events = reg.selectedEvents.split(',').map(e => e.trim());
+            events.forEach(event => {
+                eventCounts[event] = (eventCounts[event] || 0) + 1;
+            });
+        });
+
+        const response = {
+            success: true,
+            registrations: registrations,
+            stats: {
+                totalRegistrations,
+                totalRevenue,
+                eventCounts
+            }
+        };
+
+        return ContentService.createTextOutput(JSON.stringify(response))
+            .setMimeType(ContentService.MimeType.JSON);
 
     } catch (error) {
         return ContentService.createTextOutput(JSON.stringify({
